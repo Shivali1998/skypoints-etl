@@ -1,0 +1,10 @@
+{# Portable between Snowflake and DuckDB so the same expressions are unit-tested locally. #}
+{% macro age(dob, asof) -%}
+DATEDIFF('year', {{ dob }}, {{ asof }})
+  - CASE WHEN (MONTH({{ asof }}) * 100 + DAY({{ asof }})) < (MONTH({{ dob }}) * 100 + DAY({{ dob }})) THEN 1 ELSE 0 END
+{%- endmacro %}
+
+{% macro stale(last_flight, asof, days) -%}
+CASE WHEN {{ last_flight }} IS NULL THEN NULL
+     WHEN DATEDIFF('day', {{ last_flight }}, {{ asof }}) > {{ days }} THEN 'Y' ELSE 'N' END
+{%- endmacro %}
