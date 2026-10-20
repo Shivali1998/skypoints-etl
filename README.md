@@ -8,11 +8,23 @@ See `docs/architecture.md`, `docs/data_issues_found.md`, `docs/demo_script.md`, 
 ## Run
 ```
 pip install -r requirements.txt
-pytest                                                    # local tests (DuckDB, no Snowflake needed)
-python -m src.pipeline.runner --date 20240115 --dry-run   # print rendered SQL
-cp .env.example .env  # fill in, export, then:
-python -m src.pipeline.runner --date 20240115
+pytest                                                    # 25 local tests (DuckDB, no Snowflake needed)
+python -m src.pipeline.runner --date 20240115 --dry-run   # print the rendered SQL, no connection
 ```
+Against Snowflake (creates the `SKYPOINTS` database, schemas, stage, tables and an XSMALL warehouse on first run):
+```
+export SNOWFLAKE_ACCOUNT=<org-account> SNOWFLAKE_USER=<login name>
+export SNOWFLAKE_PASSWORD=...            # or, if the account is SSO-only / MFA:
+export SNOWFLAKE_TOKEN=...               # programmatic access token
+python -m src.pipeline.runner --date 20240115 [--data-dir data/sample]
+```
+Notes from setting this up on a trial account:
+- Token (PAT) logins require a network policy on the user, e.g.
+  `CREATE NETWORK POLICY p ALLOWED_IP_LIST=('<your ip>'); ALTER USER "<user>" SET NETWORK_POLICY=p;`
+- The connector wants the **login name** (often the email); `ALTER USER` wants the **user name** (case-sensitive when quoted).
+- Input files are `members_<YYYYMMDD>[_NNN].dat` and `redemptions_<YYYYMMDD>[_NNN].json`; every chunk of a day loads in parallel.
+
+Generate demo data: `python -m src.datagen.generate --rows 1000000 --chunks 4 --bad-pct 2 --date 20240118 --id-start 2000000`
 
 ## Deliverables map
 | # | Deliverable | Where |
