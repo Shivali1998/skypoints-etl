@@ -1,6 +1,9 @@
--- {{ iso3 }}: upsert members whose latest record is in this country ...
+-- {{ iso3 }}: touches only the members in today's slice (STAGING.MEMBER_LATEST), never the whole table.
+-- Upsert members whose current country is {{ iso3 }} ...
 MERGE INTO CURATED.{{ table }} t
-USING (SELECT * FROM CURATED.MEMBER_CURRENT WHERE country_iso3 = '{{ iso3 }}') s ON t.member_id = s.member_id
+USING (SELECT m.* FROM CURATED.MEMBER_CURRENT m
+       JOIN STAGING.MEMBER_LATEST l ON l.member_id = m.member_id
+       WHERE m.country_iso3 = '{{ iso3 }}') s ON t.member_id = s.member_id
 WHEN MATCHED THEN UPDATE SET
   member_name = s.member_name, enrollment_date = s.enrollment_date, last_flight_date = s.last_flight_date,
   tier_code = s.tier_code, agent_name = s.agent_name, state = s.state, country_iso3 = s.country_iso3,
@@ -10,7 +13,10 @@ WHEN NOT MATCHED THEN INSERT VALUES
   (s.member_id, s.member_name, s.enrollment_date, s.last_flight_date, s.tier_code, s.agent_name, s.state,
    s.country_iso3, s.dob, s.is_active, s.age, s.stale_member, s.source_file_date, s.updated_ts);
 
--- ... and remove members that moved to another country (MEMBER_CURRENT is the source of truth).
+-- ... and remove today's members whose current country is no longer {{ iso3 }} (they moved).
+-- Derived from MEMBER_CURRENT, not from an "old country" snapshot, so a rerun after a partial failure self-heals.
 DELETE FROM CURATED.{{ table }} t
-WHERE NOT EXISTS (SELECT 1 FROM CURATED.MEMBER_CURRENT m
-                  WHERE m.member_id = t.member_id AND m.country_iso3 = '{{ iso3 }}');
+USING (SELECT l.member_id FROM STAGING.MEMBER_LATEST l
+       JOIN CURATED.MEMBER_CURRENT m ON m.member_id = l.member_id
+       WHERE m.country_iso3 <> '{{ iso3 }}') s
+WHERE t.member_id = s.member_id;

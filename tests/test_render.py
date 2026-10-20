@@ -35,3 +35,9 @@ def test_dq_covers_every_sample_issue():
 def test_member_id_regex_flags_short_ids_only():
     rx = re.compile(render_context("x")["member_id_regex"])
     assert rx.match("223457") and not rx.match("22345") and not rx.match("2256")
+
+
+def test_country_split_only_touches_todays_members():
+    sql = country_statements("20240115")
+    assert sql.count("STAGING.MEMBER_LATEST") >= 10   # merge source + delete source, per country
+    assert "FROM CURATED.MEMBER_CURRENT WHERE country_iso3" not in sql   # no whole-table scan
