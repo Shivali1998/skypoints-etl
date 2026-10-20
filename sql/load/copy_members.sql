@@ -13,7 +13,7 @@ FROM (
          NULLIF(TRIM(SPLIT_PART($1, '|', 8)), ''),  NULLIF(TRIM(SPLIT_PART($1, '|', 9)), ''),
          NULLIF(TRIM(SPLIT_PART($1, '|', 10)), ''), NULLIF(TRIM(SPLIT_PART($1, '|', 11)), ''),
          NULLIF(TRIM(SPLIT_PART($1, '|', 12)), ''),
-         REGEXP_COUNT($1, '[|]') - 1   -- delimiters minus the leading one = data fields incl. record type
+         REGEXP_COUNT($1, '[|]') - 1   -- delimiters minus the leading one = data fields (record type not counted)
   FROM {{ stage }}/members_{{ file_date }}.dat
 )
 FILE_FORMAT = (FORMAT_NAME = 'RAW.FF_LINES')
