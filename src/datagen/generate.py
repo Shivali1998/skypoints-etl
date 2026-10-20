@@ -46,15 +46,22 @@ def redemption_doc(rng: random.Random, i: int, feed_date: str, bad: bool) -> dic
     return {"member_id": str(100000 + i), "feed_date": feed_date, "redemptions": txns}
 
 
-def generate(rows: int, bad_pct: float, file_date: str, out: Path, seed: int = 42) -> None:
+def generate(rows: int, bad_pct: float, file_date: str, out: Path, seed: int = 42,
+             chunks: int = 1, id_start: int = 0) -> None:
+    """Write `chunks` member files + `chunks` NDJSON files (members_<date>_001.dat ...) so COPY loads them in parallel."""
     rng = random.Random(seed)
     out.mkdir(parents=True, exist_ok=True)
-    with open(out / f"members_{file_date}.dat", "w") as m, open(out / f"redemptions_{file_date}.json", "w") as r:
-        m.write(HEADER + "\n")
-        for i in range(rows):
-            bad = rng.random() * 100 < bad_pct
-            m.write(member_line(rng, i, bad) + "\n")
-            r.write(json.dumps(redemption_doc(rng, i, file_date, bad)) + "\n")  # NDJSON: one doc per line, splittable
+    per = -(-rows // chunks)
+    for c in range(chunks):
+        suffix = f"_{c + 1:03d}" if chunks > 1 else ""
+        lo, hi = c * per, min(rows, (c + 1) * per)
+        with open(out / f"members_{file_date}{suffix}.dat", "w") as m, \
+             open(out / f"redemptions_{file_date}{suffix}.json", "w") as r:
+            m.write(HEADER + "\n")
+            for i in range(lo, hi):
+                bad = rng.random() * 100 < bad_pct
+                m.write(member_line(rng, id_start + i, bad) + "\n")
+                r.write(json.dumps(redemption_doc(rng, id_start + i, file_date, bad)) + "\n")  # NDJSON, splittable
 
 
 if __name__ == "__main__":
@@ -63,5 +70,7 @@ if __name__ == "__main__":
     ap.add_argument("--bad-pct", type=float, default=2.0)
     ap.add_argument("--date", default="20240115")
     ap.add_argument("--out", default="data/generated")
+    ap.add_argument("--chunks", type=int, default=1, help="split into N files (~100-250 MB each at scale)")
+    ap.add_argument("--id-start", type=int, default=0, help="first member id offset (avoid colliding with earlier days)")
     a = ap.parse_args()
-    generate(a.rows, a.bad_pct, a.date, Path(a.out))
+    generate(a.rows, a.bad_pct, a.date, Path(a.out), chunks=a.chunks, id_start=a.id_start)

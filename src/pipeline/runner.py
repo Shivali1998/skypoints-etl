@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import time
 import uuid
 from datetime import datetime
 
@@ -26,23 +27,28 @@ def run(file_date: str, dry_run: bool = False, data_dir: str = "data/sample") ->
             client.execute_script(ddl.read_text())
         client.execute_script(seed_ref_sql())
         from src.ingest.uploader import put_files
-        files = [ROOT / data_dir / f"members_{file_date}.dat", ROOT / data_dir / f"redemptions_{file_date}.json"]
-        put_files(client, [f for f in files if f.exists()])
+        src_dir = ROOT / data_dir
+        files = sorted(src_dir.glob(f"members_{file_date}*.dat")) + sorted(src_dir.glob(f"redemptions_{file_date}*.json"))
+        if not files:
+            raise SystemExit(f"no input files for {file_date} in {src_dir}")
+        put_files(client, files)
     for step in ctx["steps"]:
         sql = step_sql(step, ctx)
         if dry_run:
             print(f"-- === {step['name']} ===\n{sql}")
             continue
-        started = datetime.utcnow()
+        started, t0 = datetime.utcnow(), time.perf_counter()
         try:
             affected = client.execute_script(sql)
             status, msg = "OK", None
         except Exception as exc:  # stop the run at the failing step; rerun is safe (idempotent steps)
             status, msg, affected = "FAILED", str(exc)[:500], None
+        elapsed = time.perf_counter() - t0
+        print(f"{step['name']:<24}{status:<7}{elapsed:8.1f}s")
         client.execute_script(
-            f"INSERT INTO AUDIT.ETL_RUN_LOG (run_id,file_date,step,status,rows_out,started_ts,ended_ts,message) "
+            f"INSERT INTO AUDIT.ETL_RUN_LOG (run_id,file_date,step,status,rows_out,started_ts,ended_ts,elapsed_s,message) "
             f"SELECT '{run_id}', TO_DATE('{file_date}','YYYYMMDD'), '{step['name']}', '{status}', "
-            f"{affected if affected is not None else 'NULL'}, '{started.isoformat()}', CURRENT_TIMESTAMP(), "
+            f"{affected if affected is not None else 'NULL'}, '{started.isoformat()}', CURRENT_TIMESTAMP(), {elapsed:.2f}, "
             f"{'NULL' if msg is None else chr(39) + msg.replace(chr(39), chr(39) * 2) + chr(39)}")
         if status == "FAILED":
             raise SystemExit(f"step {step['name']} failed: {msg}")
