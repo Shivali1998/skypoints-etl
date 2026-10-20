@@ -1,0 +1,15 @@
+database: SKYPOINTS
+schemas: {raw: RAW, staging: STAGING, curated: CURATED, audit: AUDIT, ref: REF}
+stage: "@RAW.SKYPOINTS_STAGE"
+stale_days: 90
+# Order matters; each entry is a SQL file (jinja-rendered) or a built-in generator.
+steps:
+  - {name: copy_raw_members,     sql: sql/load/copy_members.sql}
+  - {name: copy_raw_redemptions, sql: sql/load/copy_redemptions.sql}
+  - {name: load_stg_members,     sql: sql/transform/load_stg_members.sql}
+  - {name: dq_members,           sql: sql/dq/member_rules.sql}
+  - {name: build_member_current, sql: sql/transform/build_member_current.sql}
+  - {name: country_split,        generator: country_split}
+  - {name: load_stg_redemptions, sql: sql/transform/load_stg_redemptions.sql}
+  - {name: dq_redemptions,       sql: sql/dq/redemption_rules.sql}
+  - {name: load_fct_redemptions, sql: sql/transform/load_fct_redemptions.sql}

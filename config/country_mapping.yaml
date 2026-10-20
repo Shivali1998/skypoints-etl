@@ -1,0 +1,7 @@
+# Seed for REF.COUNTRY. source_code is what arrives in the feed (mixed ISO-3 / ISO-2 / ad hoc).
+countries:
+  - {iso3: USA, name: United States, table: TABLE_USA,         source_codes: [USA, US]}
+  - {iso3: IND, name: India,         table: TABLE_INDIA,       source_codes: [IND, IN]}
+  - {iso3: PHL, name: Philippines,   table: TABLE_PHILIPPINES, source_codes: [PHIL, PHL, PH]}
+  - {iso3: CAN, name: Canada,        table: TABLE_CANADA,      source_codes: [CAN, CA]}
+  - {iso3: AUS, name: Australia,     table: TABLE_AUSTRALIA,   source_codes: [AU, AUS]}
