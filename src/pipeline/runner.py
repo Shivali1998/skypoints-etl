@@ -26,11 +26,12 @@ def run(file_date: str, dry_run: bool = False, data_dir: str = "data/sample") ->
         for ddl in sorted((ROOT / "sql/ddl").glob("*.sql")):
             client.execute_script(ddl.read_text())
         client.execute_script(seed_ref_sql())
-        from src.ingest.uploader import put_files
+        from src.ingest.uploader import clear_day, put_files
         src_dir = ROOT / data_dir
         files = sorted(src_dir.glob(f"members_{file_date}*.dat")) + sorted(src_dir.glob(f"redemptions_{file_date}*.json"))
         if not files:
             raise SystemExit(f"no input files for {file_date} in {src_dir}")
+        clear_day(client, file_date)
         put_files(client, files)
     for step in ctx["steps"]:
         sql = step_sql(step, ctx)

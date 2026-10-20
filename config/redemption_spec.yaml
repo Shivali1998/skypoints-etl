@@ -1,4 +1,4 @@
-file_name_pattern: '^redemptions_(?P<file_date>\d{8})(_\d{3})?\.json$'
+file_name_pattern: '^redemptions_(?P<file_date>\d{8})(_\d{3})?\.json(\.gz)?$'
 date_format: "YYYYMMDD"
 statuses: [COMPLETED, PENDING, CANCELLED]
 partners: [AeroLink, SkyBridge, GlobeAir]   # SkyPoints is the program itself -> rejected as partner

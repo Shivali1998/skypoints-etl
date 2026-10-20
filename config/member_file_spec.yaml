@@ -1,4 +1,4 @@
-file_name_pattern: '^members_(?P<file_date>\d{8})(_\d{3})?\.dat$'   # optional _NNN chunk suffix
+file_name_pattern: '^members_(?P<file_date>\d{8})(_\d{3})?\.dat(\.gz)?$'   # optional _NNN chunk suffix
 delimiter: "|"
 # Assumption: spec table lists 11 fields (incl. Post Code) but header/detail
 # records in the same document carry 10. The layout below follows the header record.

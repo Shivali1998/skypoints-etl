@@ -6,7 +6,7 @@ DELETE FROM RAW.RAW_MEMBERS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMM
 COPY INTO RAW.RAW_MEMBER_LINES (file_name, row_no, file_date, line)
 FROM (SELECT METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, TO_DATE('{{ file_date }}', 'YYYYMMDD'), $1
       FROM {{ stage }}/)
-PATTERN = '.*members_{{ file_date }}(_[0-9]+)?[.]dat'   -- all chunks of the day load in parallel
+PATTERN = '.*members_{{ file_date }}(_[0-9]+)?[.]dat([.]gz)?'   -- all chunks of the day load in parallel
 FILE_FORMAT = (FORMAT_NAME = 'RAW.FF_LINES')
 FORCE = TRUE
 ON_ERROR = CONTINUE;
