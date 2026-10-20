@@ -6,10 +6,14 @@ class SnowflakeClient:
 
     def __init__(self):
         import snowflake.connector
-        self.conn = snowflake.connector.connect(
-            account=os.environ["SNOWFLAKE_ACCOUNT"], user=os.environ["SNOWFLAKE_USER"],
-            password=os.environ["SNOWFLAKE_PASSWORD"], warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "SKYPOINTS_WH"),
-            database=os.environ.get("SNOWFLAKE_DATABASE", "SKYPOINTS"))
+        kw = dict(account=os.environ["SNOWFLAKE_ACCOUNT"], user=os.environ["SNOWFLAKE_USER"],
+                  warehouse=os.environ.get("SNOWFLAKE_WAREHOUSE", "SKYPOINTS_WH"),
+                  database=os.environ.get("SNOWFLAKE_DATABASE", "SKYPOINTS"))
+        if os.environ.get("SNOWFLAKE_TOKEN"):  # programmatic access token (no password / MFA prompt)
+            kw.update(authenticator="PROGRAMMATIC_ACCESS_TOKEN", token=os.environ["SNOWFLAKE_TOKEN"])
+        else:
+            kw["password"] = os.environ["SNOWFLAKE_PASSWORD"]
+        self.conn = snowflake.connector.connect(**kw)
 
     def execute_script(self, sql: str) -> int:
         """Run ';'-separated statements; return rows affected by the last DML statement."""
