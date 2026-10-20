@@ -1,5 +1,5 @@
--- Detail rows start with '|' so $1 is empty, $2 is the record type.
--- Re-run safe: COPY skips files already loaded (64-day load metadata); the delete covers FORCE reloads.
+-- Detail rows look like |D|Elena|223457|...; part 1 is empty, part 2 is the record type.
+-- Delete-then-load makes a FORCE rerun of the same file_date idempotent.
 DELETE FROM RAW.RAW_MEMBERS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD');
 
 COPY INTO RAW.RAW_MEMBERS
@@ -7,9 +7,14 @@ COPY INTO RAW.RAW_MEMBERS
    tier_code, agent_name, state, country, dob, is_active, field_count)
 FROM (
   SELECT METADATA$FILENAME, METADATA$FILE_ROW_NUMBER, TO_DATE('{{ file_date }}', 'YYYYMMDD'),
-         $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
-         IFF($12 IS NOT NULL, 11, IFF($11 IS NOT NULL, 10, IFF($10 IS NOT NULL, 9, 8)))  -- positions populated incl. rec type; trailing empties undercount, see data_issues
+         NULLIF(TRIM(SPLIT_PART($1, '|', 2)), ''),  NULLIF(TRIM(SPLIT_PART($1, '|', 3)), ''),
+         NULLIF(TRIM(SPLIT_PART($1, '|', 4)), ''),  NULLIF(TRIM(SPLIT_PART($1, '|', 5)), ''),
+         NULLIF(TRIM(SPLIT_PART($1, '|', 6)), ''),  NULLIF(TRIM(SPLIT_PART($1, '|', 7)), ''),
+         NULLIF(TRIM(SPLIT_PART($1, '|', 8)), ''),  NULLIF(TRIM(SPLIT_PART($1, '|', 9)), ''),
+         NULLIF(TRIM(SPLIT_PART($1, '|', 10)), ''), NULLIF(TRIM(SPLIT_PART($1, '|', 11)), ''),
+         NULLIF(TRIM(SPLIT_PART($1, '|', 12)), ''),
+         REGEXP_COUNT($1, '[|]') - 1   -- delimiters minus the leading one = data fields incl. record type
   FROM {{ stage }}/members_{{ file_date }}.dat
 )
-FILE_FORMAT = (FORMAT_NAME = 'RAW.FF_MEMBERS')
+FILE_FORMAT = (FORMAT_NAME = 'RAW.FF_LINES')
 ON_ERROR = CONTINUE;
