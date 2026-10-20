@@ -15,7 +15,7 @@ def step_sql(step: dict, ctx: dict) -> str:
     return render_sql(step["sql"], **ctx)
 
 
-def run(file_date: str, dry_run: bool = False) -> None:
+def run(file_date: str, dry_run: bool = False, data_dir: str = "data/sample") -> None:
     ctx = render_context(file_date)
     run_id = uuid.uuid4().hex[:12]
     client = None
@@ -25,6 +25,9 @@ def run(file_date: str, dry_run: bool = False) -> None:
         for ddl in sorted((ROOT / "sql/ddl").glob("*.sql")):
             client.execute_script(ddl.read_text())
         client.execute_script(seed_ref_sql())
+        from src.ingest.uploader import put_files
+        files = [ROOT / data_dir / f"members_{file_date}.dat", ROOT / data_dir / f"redemptions_{file_date}.json"]
+        put_files(client, [f for f in files if f.exists()])
     for step in ctx["steps"]:
         sql = step_sql(step, ctx)
         if dry_run:
@@ -56,5 +59,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", required=True, help="file_date YYYYMMDD")
     ap.add_argument("--dry-run", action="store_true", help="print rendered SQL, do not connect")
+    ap.add_argument("--data-dir", default="data/sample")
     a = ap.parse_args()
-    run(a.date, a.dry_run)
+    run(a.date, a.dry_run, a.data_dir)
