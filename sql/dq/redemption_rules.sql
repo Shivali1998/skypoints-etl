@@ -4,10 +4,14 @@ DELETE FROM STAGING.DQ_REJECTS WHERE feed = 'REDEMPTIONS'
 
 INSERT INTO STAGING.DQ_REJECTS (feed, file_name, row_no, business_key, rule_code, reason, raw_value)
 WITH j AS (SELECT * FROM STAGING.STG_REDEMPTIONS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'))
-SELECT 'REDEMPTIONS', file_name, NULL, txn_id, rule_code, reason, raw_value FROM (
-            SELECT *, 'MISSING_MANDATORY' rule_code, 'txn_id or member_id null' reason, NULL raw_value FROM j WHERE txn_id IS NULL OR member_id IS NULL
-  UNION ALL SELECT *, 'BAD_MILES', 'miles_redeemed must be > 0', miles_redeemed::STRING FROM j WHERE miles_redeemed IS NULL OR miles_redeemed <= 0
-  UNION ALL SELECT *, 'BAD_STATUS', 'status not in {{ statuses | join(",") }}', status FROM j WHERE status IS NULL OR status NOT IN ({{ q(statuses) }})
-  UNION ALL SELECT *, 'BAD_PARTNER', 'partner not in whitelist', partner FROM j WHERE partner IS NULL OR partner NOT IN ({{ q(partners) }})
-  UNION ALL SELECT *, 'BAD_TXN_DATE', 'txn_date null or after feed_date', txn_date::STRING FROM j WHERE txn_date IS NULL OR txn_date > feed_date
-);
+SELECT 'REDEMPTIONS', j.file_name, NULL, j.txn_id, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
+FROM (
+  SELECT *, ARRAY_CONSTRUCT_COMPACT(
+      IFF(txn_id IS NULL OR member_id IS NULL, OBJECT_CONSTRUCT('rule', 'MISSING_MANDATORY', 'reason', 'txn_id or member_id null', 'raw', NULL), NULL),
+      IFF(miles_redeemed IS NULL OR miles_redeemed <= 0, OBJECT_CONSTRUCT('rule', 'BAD_MILES', 'reason', 'miles_redeemed must be > 0', 'raw', miles_redeemed::STRING), NULL),
+      IFF(status IS NULL OR status NOT IN ({{ q(statuses) }}), OBJECT_CONSTRUCT('rule', 'BAD_STATUS', 'reason', 'status not in {{ statuses | join(",") }}', 'raw', status), NULL),
+      IFF(partner IS NULL OR partner NOT IN ({{ q(partners) }}), OBJECT_CONSTRUCT('rule', 'BAD_PARTNER', 'reason', 'partner not in whitelist', 'raw', partner), NULL),
+      IFF(txn_date IS NULL OR txn_date > feed_date, OBJECT_CONSTRUCT('rule', 'BAD_TXN_DATE', 'reason', 'txn_date null or after feed_date', 'raw', txn_date::STRING), NULL)
+  ) AS violations
+  FROM j
+) j, LATERAL FLATTEN(input => j.violations) v;

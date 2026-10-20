@@ -15,23 +15,27 @@ WITH j AS (
   JOIN STAGING.STG_MEMBERS s ON s.file_name = r.file_name AND s.row_no = r.row_no
   WHERE r.file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD') AND r.rec_type = 'D'
 )
-SELECT 'MEMBERS', file_name, row_no, mid, rule_code, reason, raw_value FROM (
-            SELECT *, 'FIELD_COUNT_MISMATCH' rule_code, 'expected {{ expected_field_count }} fields' reason, field_count::STRING raw_value FROM j WHERE field_count <> {{ expected_field_count }}
-  UNION ALL SELECT *, 'MISSING_MANDATORY', 'member_name is null', NULL FROM j WHERE raw_name IS NULL
-  UNION ALL SELECT *, 'MISSING_MANDATORY', 'member_id is null', NULL FROM j WHERE mid IS NULL
-  UNION ALL SELECT *, 'MISSING_MANDATORY', 'enrollment_date is null', NULL FROM j WHERE raw_enroll IS NULL
-  UNION ALL SELECT *, 'BAD_MEMBER_ID_FORMAT', 'member_id fails {{ member_id_regex }}', mid FROM j WHERE mid IS NOT NULL AND NOT REGEXP_LIKE(mid, '{{ member_id_regex }}')
-  UNION ALL SELECT *, 'TOO_LONG', 'member_name > {{ max_len.member_name }}', NULL FROM j WHERE LENGTH(raw_name) > {{ max_len.member_name }}
-  UNION ALL SELECT *, 'TOO_LONG', 'country > {{ max_len.country }}', raw_country FROM j WHERE LENGTH(raw_country) > {{ max_len.country }}
-  UNION ALL SELECT *, 'BAD_ENROLLMENT_DATE', 'not a valid {{ date_format }} date', raw_enroll FROM j WHERE raw_enroll IS NOT NULL AND enrollment_date IS NULL
-  UNION ALL SELECT *, 'BAD_LAST_FLIGHT_DATE', 'not a valid {{ date_format }} date', raw_flight FROM j WHERE raw_flight IS NOT NULL AND last_flight_date IS NULL
-  UNION ALL SELECT *, 'BAD_DOB', 'not a valid {{ dob_format }} date', raw_dob FROM j WHERE raw_dob IS NOT NULL AND dob IS NULL
-  UNION ALL SELECT *, 'BAD_AGE', 'age outside {{ min_age }}..{{ max_age }}', age::STRING FROM j WHERE age NOT BETWEEN {{ min_age }} AND {{ max_age }}
-  UNION ALL SELECT *, 'FLIGHT_BEFORE_ENROLLMENT', 'last_flight_date < enrollment_date', raw_flight FROM j WHERE last_flight_date < enrollment_date
-  UNION ALL SELECT *, 'DOB_AFTER_ENROLLMENT', 'dob >= enrollment_date', raw_dob FROM j WHERE dob >= enrollment_date
-  UNION ALL SELECT *, 'BAD_TIER', 'tier not in {{ tier_codes | join(",") }}', raw_tier FROM j WHERE tier_code IS NOT NULL AND tier_code NOT IN ({{ q(tier_codes) }})
-  UNION ALL SELECT *, 'BAD_ACTIVE_FLAG', 'flag not in {{ active_flags | join(",") }}', raw_active FROM j WHERE is_active IS NOT NULL AND is_active NOT IN ({{ q(active_flags) }})
-  UNION ALL SELECT *, 'UNMAPPED_COUNTRY', 'country not in REF.COUNTRY', raw_country FROM j WHERE country_iso3 IS NULL
-  -- Key uniqueness: a member repeated inside one file keeps only its last row.
-  UNION ALL SELECT *, 'DUP_MEMBER_IN_FILE', 'superseded by a later row in the same file', mid FROM j WHERE mid IS NOT NULL AND row_no < last_row_for_member
-);
+SELECT 'MEMBERS', j.file_name, j.row_no, j.mid, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
+FROM (
+  -- one pass over j: every rule becomes an object (or NULL), compacted into an array, then flattened
+  SELECT *, ARRAY_CONSTRUCT_COMPACT(
+      IFF(field_count <> {{ expected_field_count }}, OBJECT_CONSTRUCT('rule', 'FIELD_COUNT_MISMATCH', 'reason', 'expected {{ expected_field_count }} fields', 'raw', field_count::STRING), NULL),
+      IFF(raw_name IS NULL, OBJECT_CONSTRUCT('rule', 'MISSING_MANDATORY', 'reason', 'member_name is null', 'raw', NULL), NULL),
+      IFF(mid IS NULL, OBJECT_CONSTRUCT('rule', 'MISSING_MANDATORY', 'reason', 'member_id is null', 'raw', NULL), NULL),
+      IFF(raw_enroll IS NULL, OBJECT_CONSTRUCT('rule', 'MISSING_MANDATORY', 'reason', 'enrollment_date is null', 'raw', NULL), NULL),
+      IFF(mid IS NOT NULL AND NOT REGEXP_LIKE(mid, '{{ member_id_regex }}'), OBJECT_CONSTRUCT('rule', 'BAD_MEMBER_ID_FORMAT', 'reason', 'member_id fails {{ member_id_regex }}', 'raw', mid), NULL),
+      IFF(LENGTH(raw_name) > {{ max_len.member_name }}, OBJECT_CONSTRUCT('rule', 'TOO_LONG', 'reason', 'member_name > {{ max_len.member_name }}', 'raw', NULL), NULL),
+      IFF(LENGTH(raw_country) > {{ max_len.country }}, OBJECT_CONSTRUCT('rule', 'TOO_LONG', 'reason', 'country > {{ max_len.country }}', 'raw', raw_country), NULL),
+      IFF(raw_enroll IS NOT NULL AND enrollment_date IS NULL, OBJECT_CONSTRUCT('rule', 'BAD_ENROLLMENT_DATE', 'reason', 'not a valid {{ date_format }} date', 'raw', raw_enroll), NULL),
+      IFF(raw_flight IS NOT NULL AND last_flight_date IS NULL, OBJECT_CONSTRUCT('rule', 'BAD_LAST_FLIGHT_DATE', 'reason', 'not a valid {{ date_format }} date', 'raw', raw_flight), NULL),
+      IFF(raw_dob IS NOT NULL AND dob IS NULL, OBJECT_CONSTRUCT('rule', 'BAD_DOB', 'reason', 'not a valid {{ dob_format }} date', 'raw', raw_dob), NULL),
+      IFF(age NOT BETWEEN {{ min_age }} AND {{ max_age }}, OBJECT_CONSTRUCT('rule', 'BAD_AGE', 'reason', 'age outside {{ min_age }}..{{ max_age }}', 'raw', age::STRING), NULL),
+      IFF(last_flight_date < enrollment_date, OBJECT_CONSTRUCT('rule', 'FLIGHT_BEFORE_ENROLLMENT', 'reason', 'last_flight_date < enrollment_date', 'raw', raw_flight), NULL),
+      IFF(dob >= enrollment_date, OBJECT_CONSTRUCT('rule', 'DOB_AFTER_ENROLLMENT', 'reason', 'dob >= enrollment_date', 'raw', raw_dob), NULL),
+      IFF(tier_code IS NOT NULL AND tier_code NOT IN ({{ q(tier_codes) }}), OBJECT_CONSTRUCT('rule', 'BAD_TIER', 'reason', 'tier not in {{ tier_codes | join(",") }}', 'raw', raw_tier), NULL),
+      IFF(is_active IS NOT NULL AND is_active NOT IN ({{ q(active_flags) }}), OBJECT_CONSTRUCT('rule', 'BAD_ACTIVE_FLAG', 'reason', 'flag not in {{ active_flags | join(",") }}', 'raw', raw_active), NULL),
+      IFF(country_iso3 IS NULL, OBJECT_CONSTRUCT('rule', 'UNMAPPED_COUNTRY', 'reason', 'country not in REF.COUNTRY', 'raw', raw_country), NULL),
+      IFF(mid IS NOT NULL AND row_no < last_row_for_member, OBJECT_CONSTRUCT('rule', 'DUP_MEMBER_IN_FILE', 'reason', 'superseded by a later row in the same file', 'raw', mid), NULL)
+  ) AS violations
+  FROM j
+) j, LATERAL FLATTEN(input => j.violations) v;
