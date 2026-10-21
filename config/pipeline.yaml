@@ -13,3 +13,4 @@ steps:
   - {name: load_stg_redemptions, sql: sql/transform/load_stg_redemptions.sql}
   - {name: dq_redemptions,       sql: sql/dq/redemption_rules.sql}
   - {name: load_fct_redemptions, sql: sql/transform/load_fct_redemptions.sql}
+  - {name: create_views,         sql: sql/views/v_member_redemptions.sql}

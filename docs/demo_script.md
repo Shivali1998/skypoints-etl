@@ -4,7 +4,7 @@
 1. Snowflake trial active. Export `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, and `SNOWFLAKE_PASSWORD` or `SNOWFLAKE_TOKEN` (README, "Run").
 2. Token logins need a network policy that allows **today's IP**. On a new network run in Snowsight (as ACCOUNTADMIN):
    `ALTER NETWORK POLICY SKYPOINTS_DEMO_POLICY SET ALLOWED_IP_LIST = ('<your public ip>');` (get it with `curl https://api.ipify.org`).
-3. Dry run an hour before: `python -m src.pipeline.runner --date 20240115` must print 9 steps and `reconciled`.
+3. Dry run an hour before: `python -m src.pipeline.runner --date 20240115` must print every step and `reconciled`.
 4. Optional: pre-run the 1M test (`python scripts/scale_test.py`, ~6 min, mostly upload) so the results are in Snowflake and in `docs/scale_test.md`.
 5. Open in tabs: `docs/architecture.md`, `docs/data_issues_found.md`, `AI_USAGE.md`, a Snowsight worksheet, and a terminal in the repo.
 
