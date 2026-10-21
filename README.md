@@ -9,27 +9,57 @@ Python orchestrates the steps, renders per-country SQL from config, generates te
 ## Architecture
 
 ```
- members_YYYYMMDD[_NNN].dat ──┐                        RAW                 RAW_MEMBER_LINES -> RAW_MEMBERS (all VARCHAR)
-                              ├─► @SKYPOINTS_STAGE ─►  COPY INTO   ──────►  RAW_REDEMPTIONS (VARIANT)
- redemptions_YYYYMMDD[_NNN].json ┘  (gzip chunks, parallel)                          │ TRY_TO_* typing + AGE + STALE_MEMBER
-                                                                                     ▼
-                                                      STAGING    STG_MEMBERS   STG_REDEMPTIONS (LATERAL FLATTEN)
-                                                                 DQ_REJECTS  (file, row, rule, reason, raw value)
-                                                                                     │ latest record wins (QUALIFY) + MERGE
-                                                                                     ▼
-                                                      CURATED    MEMBER_CURRENT ─► TABLE_USA / TABLE_INDIA / TABLE_PHILIPPINES /
-                                                                                  TABLE_CANADA / TABLE_AUSTRALIA
-                                                                 FCT_REDEMPTIONS ─► V_MEMBER_REDEMPTIONS (join on member_id)
-                                                      REF        COUNTRY (source code -> ISO-3 -> table)
-                                                      AUDIT      ETL_RUN_LOG (status + seconds per step), FILE_LOAD_LOG
+┌─ SOURCE (daily) ────────────────────────────────────────────────────────────────────┐
+│ members_YYYYMMDD[_NNN].dat        pipe-delimited, 1 header + 1 detail row per member│
+│ redemptions_YYYYMMDD[_NNN].json   1 JSON document per member, nested transactions   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼ PYTHON: check name/date + header, clear old upload, gzip + PUT
+┌─ STAGE   @RAW.SKYPOINTS_STAGE ──────────────────────────────────────────────────────┐
+│ gzip chunks (100-250 MB each at scale), loaded in parallel by COPY INTO             │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼ SQL: COPY INTO (whole line / VARIANT), then parse
+┌─ RAW   nothing is typed, so a bad value can never fail a load ──────────────────────┐
+│ RAW_MEMBER_LINES   untouched source lines                                           │
+│ RAW_MEMBERS        parsed columns, all VARCHAR + file_name, row_no, field_count     │
+│ RAW_REDEMPTIONS    one VARIANT document per row                                     │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼ SQL: TRY_TO_* typing, AGE, STALE_MEMBER, country lookup, FLATTEN
+┌─ STAGING ───────────────────────────────────────────────────────────────────────────┐
+│ STG_MEMBERS        typed rows + age + stale_member + country_iso3 (REF.COUNTRY)     │
+│ STG_REDEMPTIONS    one row per transaction                                          │
+│ DQ_REJECTS         one row per violated rule: file, row, key, rule, reason, value   │
+│                    (17 member + 5 redemption rules, evaluated in one pass)          │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+                                        │
+                                        ▼ SQL: anti-join on DQ_REJECTS, latest record wins (QUALIFY), MERGE
+┌─ CURATED ───────────────────────────────────────────────────────────────────────────┐
+│ MEMBER_LATEST      today's valid members, one row per member (transient)            │
+│ MEMBER_CURRENT     one row per member across all days                               │
+│ TABLE_USA  TABLE_INDIA  TABLE_PHILIPPINES  TABLE_CANADA  TABLE_AUSTRALIA            │
+│                    MERGE only today's members; delete those that moved country      │
+│ FCT_REDEMPTIONS    latest feed wins per txn_id; unknown members kept                │
+│                    (member_found = FALSE)                                           │
+│ V_MEMBER_REDEMPTIONS   members LEFT JOIN redemptions on member_id                   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 
- Python: runner.py executes the steps in order and logs them · country_splitter.py renders per-country SQL ·
-         uploader / file_checks · datagen · scale_test.py
+┌─ SUPPORTING ────────────────────────────────────────────────────────────────────────┐
+│ REF.COUNTRY        source code (USA, US, PHIL, AU ...) -> ISO-3 -> country table    │
+│ AUDIT.ETL_RUN_LOG  run_id, step, status, rows, elapsed seconds (one row per step)   │
+└─────────────────────────────────────────────────────────────────────────────────────┘
+
+┌─ ORCHESTRATION   python -m src.pipeline.runner --date YYYYMMDD ─────────────────────┐
+│ Runs the 10 steps in config/pipeline.yaml in order, logs each one, stops at the     │
+│ first failure, then checks raw rows == staged rows. Every step is delete-then-      │
+│ insert or MERGE, so a rerun of the same date is safe.                               │
+└─────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Responsibility |
 |---|---|
-| **RAW** | Everything stored as text with file name, row number and load time, so a bad value can never fail a load. |
+| **RAW** | Everything stored as text with file name and row number; the member file is landed as raw lines first so each row's field count can be checked. |
 | **STAGING** | Typed columns, `AGE` (corrected for birthdays not yet reached) and `STALE_MEMBER` (> 90 days since last flight). Rule violations go to `DQ_REJECTS`; rows are never dropped silently. |
 | **CURATED** | `MEMBER_CURRENT` keeps the latest record per member; each country table is merged from it, and a member who moves country is deleted from the old table. |
 | **Redemptions** | One row per transaction, the latest feed wins per `txn_id` (PENDING becomes COMPLETED); unknown members are kept with `member_found = FALSE`. |
