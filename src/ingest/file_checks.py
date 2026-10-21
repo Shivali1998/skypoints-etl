@@ -36,3 +36,21 @@ def file_hash(path: str, chunk: int = 8 * 1024 * 1024) -> str:
         while block := f.read(chunk):
             h.update(block)
     return h.hexdigest()
+
+
+def validate_files(paths, member_spec: dict, redemption_spec: dict) -> None:
+    """Pre-load gate: file name pattern + date, and the member header record. Raises ValueError listing every problem."""
+    from pathlib import Path
+    problems = []
+    for p in map(Path, paths):
+        is_member = p.name.startswith("members_")
+        spec = member_spec if is_member else redemption_spec
+        r = check_name(p.name, spec["file_name_pattern"])
+        if not r.ok:
+            problems += [f"{p.name}: {x}" for x in r.problems]
+        elif is_member:
+            with open(p) as f:
+                if not check_member_header(f.readline(), member_spec["columns"]):
+                    problems.append(f"{p.name}: header record does not match the layout")
+    if problems:
+        raise ValueError("input files rejected:\n  " + "\n  ".join(problems))

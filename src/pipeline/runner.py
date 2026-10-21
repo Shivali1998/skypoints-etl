@@ -31,6 +31,9 @@ def run(file_date: str, dry_run: bool = False, data_dir: str = "data/sample") ->
         files = sorted(src_dir.glob(f"members_{file_date}*.dat")) + sorted(src_dir.glob(f"redemptions_{file_date}*.json"))
         if not files:
             raise SystemExit(f"no input files for {file_date} in {src_dir}")
+        from src.ingest.file_checks import validate_files
+        from src.config import load_yaml
+        validate_files(files, load_yaml("member_file_spec.yaml"), load_yaml("redemption_spec.yaml"))
         clear_day(client, file_date)
         put_files(client, files)
     for step in ctx["steps"]:
