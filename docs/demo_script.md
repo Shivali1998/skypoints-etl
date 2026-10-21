@@ -21,14 +21,21 @@ mixed country codes, a partner called `SkyPoints`, PENDING transactions.
 ```
 python -m src.pipeline.runner --date 20240115
 ```
-Point at the per-step timings. Then in Snowsight:
+Point at the per-step timings, and say that before anything is uploaded the runner checks each file's name, date and
+header record. The last line is a check that raw rows equal staged rows. Then in Snowsight (the queries filter to the sample members, so extra test data in the account doesn't get in the way):
 ```sql
 USE DATABASE SKYPOINTS;
-SELECT rule_code, business_key, raw_value FROM STAGING.DQ_REJECTS ORDER BY 1;      -- IDs 22345/2256, partner SkyPoints
-SELECT member_name, dob, age, stale_member, country_iso3 FROM STAGING.STG_MEMBERS;  -- DOB 03051985 -> 1985-05-03, leading zero kept
-SELECT member_id, country_iso3 FROM CURATED.MEMBER_CURRENT;
-SELECT 'INDIA' t, member_id FROM CURATED.TABLE_INDIA UNION ALL SELECT 'USA', member_id FROM CURATED.TABLE_USA;
+SELECT feed, rule_code, business_key, raw_value FROM STAGING.DQ_REJECTS WHERE file_date = '2024-01-15';   -- IDs 22345/2256, partner SkyPoints
+SELECT member_name, dob, age, stale_member, country_iso3 FROM STAGING.STG_MEMBERS WHERE file_date = '2024-01-15' ORDER BY row_no;   -- DOB 03051985 -> 1985-05-03, leading zero kept
+SELECT member_id, member_name, country_iso3 FROM CURATED.MEMBER_CURRENT WHERE member_id IN ('223457','223458','223459') ORDER BY 1;
+SELECT 'INDIA' t, member_id FROM CURATED.TABLE_INDIA WHERE member_id = '223458' UNION ALL SELECT 'USA', member_id FROM CURATED.TABLE_USA WHERE member_id = '223457';
 ```
+
+Optional (30 s): show the file check. This copy of the member file has `County` instead of `Country` in the header:
+```
+python -m src.pipeline.runner --date 20240115 --data-dir data/sample/bad_header
+```
+It stops with `header record does not match the layout` before anything is uploaded or loaded.
 
 ## 4. Country move + JSON status change (3 min)
 Day 2 moves Ravi (223458) from India to Canada and flips transaction RX10091 to CANCELLED:
@@ -36,19 +43,21 @@ Day 2 moves Ravi (223458) from India to Canada and flips transaction RX10091 to 
 python -m src.pipeline.runner --date 20240116 --data-dir data/sample/day2
 ```
 ```sql
-SELECT member_id FROM CURATED.TABLE_INDIA;                       -- empty: Ravi left
+SELECT member_id FROM CURATED.TABLE_INDIA WHERE member_id = '223458';   -- no rows: Ravi left
 SELECT member_id, source_file_date FROM CURATED.TABLE_CANADA WHERE member_id = '223458';
-SELECT txn_id, status, member_found FROM CURATED.FCT_REDEMPTIONS ORDER BY 1;   -- RX10091 CANCELLED
-SELECT * FROM CURATED.V_MEMBER_REDEMPTIONS;                      -- the join back to members
+SELECT txn_id, status, member_found FROM CURATED.FCT_REDEMPTIONS WHERE txn_id IN ('RX10091','RX20000') ORDER BY 1;   -- RX10091 CANCELLED
+SELECT * FROM CURATED.V_MEMBER_REDEMPTIONS WHERE member_id IN ('223457','223458') ORDER BY member_id, txn_id;   -- the join back to members
 ```
 Rerun `--date 20240115` to show it is idempotent and an older file does not overwrite newer data.
 
 ## 5. Scale (3 min) - `docs/scale_test.md`
-Show the pre-run 1M results and `SELECT step, elapsed_s FROM AUDIT.ETL_RUN_LOG ORDER BY started_ts DESC LIMIT 9;`.
+Show the pre-run 1M results and `SELECT step, status, elapsed_s FROM AUDIT.ETL_RUN_LOG ORDER BY logged_ts DESC LIMIT 10;`.
 Optionally run live (1-2 min): `python scripts/scale_test.py --rows 100000 --chunks 2 --date 20240120 --id-start 4000000`
 (use a fresh date and id-start each time). It prints PASS/FAIL for every count against the generated files.
 Be explicit: tested at millions, not billions. For billions: larger warehouse, 100-250 MB chunks, Snowpipe from S3,
 cluster on (country, date), possibly one clustered table with per-country views instead of physical tables.
+
+The run log records status and seconds per step (no row counts). For counts, point to the reconciliation line and `DQ_REJECTS`.
 
 ## 6. AI usage (2 min) - `AI_USAGE.md` and `git log --oneline`
 Walk through the mistakes you caught and fixed (field count from NULLs, REGEXP_COUNT not allowed in COPY, per-country

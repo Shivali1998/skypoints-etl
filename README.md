@@ -108,7 +108,7 @@ per-step timing; and finally tested at 1,000,000 members.
 **1. Set up and run the local tests** (no Snowflake needed; uses DuckDB for the pure-SQL logic)
 ```
 pip install -r requirements.txt
-pytest                                                     # 26 tests
+pytest                                                     # 27 tests
 python -m src.pipeline.runner --date 20240115 --dry-run    # print the rendered SQL for every step
 ```
 
@@ -159,7 +159,7 @@ Details and per-step timings: `docs/scale_test.md`.
 ```
 config/    pipeline steps, file specs, country mapping        sql/ddl, load, transform, dq, views, macros
 src/       pipeline (runner, country_splitter), ingest, db, datagen
-scripts/   scale_test.py                                       tests/    26 pytest tests
+scripts/   scale_test.py                                       tests/    27 pytest tests
 docs/      architecture, data issues + assumptions, demo script, scale test results
 ```
 Other docs: `docs/architecture.md`, `docs/demo_script.md`, `AI_USAGE.md`.
