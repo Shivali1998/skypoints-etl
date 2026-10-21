@@ -41,7 +41,7 @@ SQL-first ELT on Snowflake. SQL does all data work; Python orchestrates, generat
 
 ┌─ SUPPORTING ────────────────────────────────────────────────────────────────────────┐
 │ REF.COUNTRY        source code (USA, US, PHIL, AU ...) -> ISO-3 -> country table    │
-│ AUDIT.ETL_RUN_LOG  run_id, step, status, rows, elapsed seconds (one row per step)   │
+│ AUDIT.ETL_RUN_LOG  run_id, step, status, elapsed seconds, error text, per step   │
 └─────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─ ORCHESTRATION   python -m src.pipeline.runner --date YYYYMMDD ─────────────────────┐
