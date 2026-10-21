@@ -42,7 +42,7 @@ def main() -> int:
     d = f"TO_DATE('{a.date}','YYYYMMDD')"
     q = c.scalar
     got_rules = dict(c.conn.cursor().execute(
-        f"SELECT rule_code, COUNT(*) FROM STAGING.DQ_REJECTS WHERE feed='MEMBERS' AND file_name LIKE '%{a.date}%' GROUP BY 1").fetchall())
+        f"SELECT rule_code, COUNT(*) FROM STAGING.DQ_REJECTS WHERE feed='MEMBERS' AND file_date={d} GROUP BY 1").fetchall())
     union = " UNION ALL ".join(f"SELECT member_id FROM CURATED.{t}" for t in COUNTRY_TABLES)
     checks = [
         ("raw member rows", q(f"SELECT COUNT(*) FROM RAW.RAW_MEMBERS WHERE rec_type='D' AND file_date={d}"), exp["members"]),
@@ -50,7 +50,7 @@ def main() -> int:
         ("valid members in MEMBER_CURRENT", q(f"SELECT COUNT(*) FROM CURATED.MEMBER_CURRENT WHERE source_file_date={d}"), exp["valid_members"]),
         ("transactions staged", q(f"SELECT COUNT(*) FROM STAGING.STG_REDEMPTIONS WHERE file_date={d}"), exp["txns"]),
         ("transactions loaded", q(f"SELECT COUNT(*) FROM CURATED.FCT_REDEMPTIONS WHERE feed_date={d}"), exp["valid_txns"]),
-        ("BAD_MILES rejects", q(f"SELECT COUNT(*) FROM STAGING.DQ_REJECTS WHERE rule_code='BAD_MILES' AND file_name LIKE '%{a.date}%'"), exp["bad_txns"]),
+        ("BAD_MILES rejects", q(f"SELECT COUNT(*) FROM STAGING.DQ_REJECTS WHERE rule_code='BAD_MILES' AND file_date={d}"), exp["bad_txns"]),
         ("country tables: rows == distinct members", q(f"SELECT COUNT(*) - COUNT(DISTINCT member_id) FROM ({union})"), 0),
     ] + [(f"rejects {r}", got_rules.get(r, 0), n) for r, n in sorted(exp["member_rules"].items())]
 

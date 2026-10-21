@@ -13,6 +13,6 @@ CREATE TABLE IF NOT EXISTS STAGING.STG_REDEMPTIONS (
 ) CLUSTER BY (file_date);
 
 CREATE TABLE IF NOT EXISTS STAGING.DQ_REJECTS (
-  feed STRING, file_name STRING, row_no NUMBER, business_key STRING,
+  feed STRING, file_date DATE, file_name STRING, row_no NUMBER, business_key STRING,
   rule_code STRING, reason STRING, raw_value STRING, load_ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );

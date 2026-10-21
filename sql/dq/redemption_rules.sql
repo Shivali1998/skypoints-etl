@@ -1,11 +1,10 @@
 {% from 'sql/macros/common.sql.j2' import q %}
 -- Same one-pass pattern as member_rules.sql: IFF per rule -> array of violations -> FLATTEN.
-DELETE FROM STAGING.DQ_REJECTS WHERE feed = 'REDEMPTIONS'
-  AND file_name IN (SELECT DISTINCT file_name FROM STAGING.STG_REDEMPTIONS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'));
+DELETE FROM STAGING.DQ_REJECTS WHERE feed = 'REDEMPTIONS' AND file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD');
 
-INSERT INTO STAGING.DQ_REJECTS (feed, file_name, row_no, business_key, rule_code, reason, raw_value)
+INSERT INTO STAGING.DQ_REJECTS (feed, file_date, file_name, row_no, business_key, rule_code, reason, raw_value)
 WITH j AS (SELECT * FROM STAGING.STG_REDEMPTIONS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'))
-SELECT 'REDEMPTIONS', j.file_name, NULL, j.txn_id, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
+SELECT 'REDEMPTIONS', j.file_date, j.file_name, NULL, j.txn_id, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
 FROM (
   SELECT *, ARRAY_CONSTRUCT_COMPACT(
       IFF(txn_id IS NULL OR member_id IS NULL, OBJECT_CONSTRUCT('rule', 'MISSING_MANDATORY', 'reason', 'txn_id or member_id null', 'raw', NULL), NULL),

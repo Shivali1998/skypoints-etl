@@ -36,7 +36,10 @@ def upload_inputs(client: SnowflakeClient, file_date: str, data_dir: str) -> Non
     files = sorted(folder.glob(f"members_{file_date}*.dat")) + sorted(folder.glob(f"redemptions_{file_date}*.json"))
     if not files:
         raise SystemExit(f"no input files for {file_date} in {folder}")
-    validate_files(files, load_yaml("member_file_spec.yaml"), load_yaml("redemption_spec.yaml"))
+    try:
+        validate_files(files, load_yaml("member_file_spec.yaml"), load_yaml("redemption_spec.yaml"))
+    except ValueError as exc:  # bad file name or header: stop before anything is uploaded or loaded
+        raise SystemExit(str(exc))
     clear_day(client, file_date)
     put_files(client, files)
 

@@ -3,13 +3,12 @@
 -- How the rules work: every rule is an IFF(<violated?>, <reject details>, NULL) in one list.
 -- ARRAY_CONSTRUCT_COMPACT drops the NULLs, LATERAL FLATTEN turns each remaining entry into one
 -- DQ_REJECTS row, and the data is read once no matter how many rules there are.
-DELETE FROM STAGING.DQ_REJECTS
-WHERE feed = 'MEMBERS'
-  AND file_name IN (SELECT DISTINCT file_name FROM RAW.RAW_MEMBERS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'));
+-- Rejects are replaced per feed and date (not per file name), so a resend with different chunks leaves nothing stale.
+DELETE FROM STAGING.DQ_REJECTS WHERE feed = 'MEMBERS' AND file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD');
 
-INSERT INTO STAGING.DQ_REJECTS (feed, file_name, row_no, business_key, rule_code, reason, raw_value)
+INSERT INTO STAGING.DQ_REJECTS (feed, file_date, file_name, row_no, business_key, rule_code, reason, raw_value)
 WITH j AS (
-  SELECT r.file_name, r.row_no, r.member_id AS mid, r.member_name AS raw_name, r.field_count,
+  SELECT r.file_date, r.file_name, r.row_no, r.member_id AS mid, r.member_name AS raw_name, r.field_count,
          r.enrollment_date AS raw_enroll, r.last_flight_date AS raw_flight, r.dob AS raw_dob,
          r.tier_code AS raw_tier, r.is_active AS raw_active, r.country AS raw_country,
          s.enrollment_date, s.last_flight_date, s.dob, s.tier_code, s.is_active, s.country_iso3, s.age,
@@ -18,7 +17,7 @@ WITH j AS (
   JOIN STAGING.STG_MEMBERS s ON s.file_name = r.file_name AND s.row_no = r.row_no
   WHERE r.file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD') AND r.rec_type = 'D'
 )
-SELECT 'MEMBERS', j.file_name, j.row_no, j.mid, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
+SELECT 'MEMBERS', j.file_date, j.file_name, j.row_no, j.mid, v.value:rule::STRING, v.value:reason::STRING, v.value:raw::STRING
 FROM (
   -- one pass over j: every rule becomes an object (or NULL), compacted into an array, then flattened
   SELECT *, ARRAY_CONSTRUCT_COMPACT(
