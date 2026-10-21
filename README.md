@@ -1,83 +1,135 @@
 # SkyPoints ETL
 
-Daily load of an airline loyalty programme's members into per-country tables on Snowflake, plus a
-semi-structured redemption feed. SQL-first ELT: SQL does all data work, so billions of rows never leave the
-warehouse; Python orchestrates, renders per-country SQL from config, generates test data and runs tests.
+Daily load of an airline loyalty programme's members into **per-country tables** on Snowflake, plus a
+semi-structured **redemption feed**, built to run on millions of rows per day.
 
-## The two input feeds
+**SQL-first ELT.** All data work happens as set-based SQL inside Snowflake, so rows never pass through Python.
+Python orchestrates the steps, renders per-country SQL from config, generates test data and runs tests.
 
-### 1. Member flat file: `members_<YYYYMMDD>[_NNN].dat` (pipe-delimited)
-One header record (`|H|`) and one detail record (`|D|`) per member. Large days are split into `_NNN` chunks that load in parallel.
+## Architecture
+
+```
+ members_YYYYMMDD[_NNN].dat ──┐                        RAW                 RAW_MEMBER_LINES -> RAW_MEMBERS (all VARCHAR)
+                              ├─► @SKYPOINTS_STAGE ─►  COPY INTO   ──────►  RAW_REDEMPTIONS (VARIANT)
+ redemptions_YYYYMMDD[_NNN].json ┘  (gzip chunks, parallel)                          │ TRY_TO_* typing + AGE + STALE_MEMBER
+                                                                                     ▼
+                                                      STAGING    STG_MEMBERS   STG_REDEMPTIONS (LATERAL FLATTEN)
+                                                                 DQ_REJECTS  (file, row, rule, reason, raw value)
+                                                                                     │ latest record wins (QUALIFY) + MERGE
+                                                                                     ▼
+                                                      CURATED    MEMBER_CURRENT ─► TABLE_USA / TABLE_INDIA / TABLE_PHILIPPINES /
+                                                                                  TABLE_CANADA / TABLE_AUSTRALIA
+                                                                 FCT_REDEMPTIONS ─► V_MEMBER_REDEMPTIONS (join on member_id)
+                                                      REF        COUNTRY (source code -> ISO-3 -> table)
+                                                      AUDIT      ETL_RUN_LOG (status + seconds per step), FILE_LOAD_LOG
+
+ Python: runner.py executes the steps in order and logs them · country_splitter.py renders per-country SQL ·
+         uploader / file_checks · datagen · scale_test.py
+```
+
+| Layer | Responsibility |
+|---|---|
+| **RAW** | Everything stored as text with file name, row number and load time, so a bad value can never fail a load. |
+| **STAGING** | Typed columns, `AGE` (corrected for birthdays not yet reached) and `STALE_MEMBER` (> 90 days since last flight). Rule violations go to `DQ_REJECTS`; rows are never dropped silently. |
+| **CURATED** | `MEMBER_CURRENT` keeps the latest record per member; each country table is merged from it, and a member who moves country is deleted from the old table. |
+| **Redemptions** | One row per transaction, the latest feed wins per `txn_id` (PENDING becomes COMPLETED); unknown members are kept with `member_found = FALSE`. |
+
+**Design decisions**
+- **Incremental and idempotent:** each run handles one `file_date`; every step is delete-then-insert or `MERGE`, so a rerun is safe and an older file never overwrites newer data.
+- **Country tables are generated from `REF.COUNTRY` and config:** a new country is a config row, not new SQL. The split touches only the members in the day's file, not the whole table.
+- **Validation in one pass:** 17 member rules and 5 redemption rules are evaluated together and flattened once.
+- **Chunked parallel load:** large days are split into `_NNN` files (aim for 100-250 MB each) and loaded in parallel.
+- **Business key is `member_id`**, not Member Name.
+
+## Input feeds
+
+**Members**: `members_<YYYYMMDD>[_NNN].dat`, pipe-delimited, one header and one detail record per member.
 ```
 |H|Member_Name|Member_Id|Enrollment_Date|Last_Flight_Date|Tier_Code|Agent_Name|State|Country|DOB|Is_Active
 |D|Elena|223457|20101012|20121013|GLD|Sam|CA|USA|03051985|A
-|D|Ravi|223458|20101012|20121013|SLV|Sam|TN|IND|03051985|A
 ```
-| Pos | Column | Length | Type | Mandatory | Notes |
-|---|---|---|---|---|---|
-| 1 | Member Name | 255 | VARCHAR | Y | spec marks it as the key column; we key on Member ID (see below) |
-| 2 | Member ID | 18 | VARCHAR | Y | business key |
-| 3 | Enrollment Date | 8 | DATE | Y | YYYYMMDD |
-| 4 | Last Flight Date | 8 | DATE | N | YYYYMMDD; drives `Stale_Member` (> 90 days) |
-| 5 | Tier Code | 5 | CHAR | N | GLD / SLV / PLT |
-| 6 | Agent Name | 255 | CHAR | N | |
-| 7 | State | 5 | CHAR | N | |
-| 8 | Country | 5 | CHAR | N | mixed ISO-3 / ISO-2 / ad hoc; mapped via `REF.COUNTRY` |
-| 9 | Post Code | 5 | INT | N | in the spec table but absent from the header/detail records, so not loaded |
-| 10 | Date of Birth | 8 | DATE | N | sample is `03051985` (DDMMYYYY), unlike the other dates; drives `Age` |
-| 11 | Active Member | 1 | CHAR | N | A / I |
 
-### 2. Redemption feed: `redemptions_<YYYYMMDD>[_NNN].json` (one JSON document per member)
+**Redemptions**: `redemptions_<YYYYMMDD>[_NNN].json`, one JSON document per member.
 ```json
-{ "member_id": "223457", "feed_date": "20240115",
-  "redemptions": [
-    { "txn_id": "RX10091", "txn_date": "20240110", "partner": "AeroLink", "miles_redeemed": 12000, "status": "COMPLETED" },
-    { "txn_id": "RX10092", "txn_date": "20240113", "partner": "SkyPoints", "miles_redeemed": 5000,  "status": "PENDING" } ] }
+{ "member_id": "223457", "feed_date": "20240115", "redemptions": [
+  { "txn_id": "RX10091", "txn_date": "20240110", "partner": "AeroLink", "miles_redeemed": 12000, "status": "COMPLETED" } ] }
 ```
-Flattened with `LATERAL FLATTEN` to one row per transaction; the latest feed wins per `txn_id` (PENDING -> COMPLETED);
-joined to members on `member_id` (`CURATED.V_MEMBER_REDEMPTIONS`). Transactions for unknown members are kept with `member_found = FALSE`.
+Column lengths, types and rules: `config/member_file_spec.yaml`, `config/redemption_spec.yaml`.
+Problems found in the sample data and how each is handled: `docs/data_issues_found.md`.
 
-### What happens to them
-```
-flat file / JSON -> @stage -> RAW (all VARCHAR/VARIANT) -> STAGING (typed, AGE, STALE_MEMBER, DQ_REJECTS)
-                 -> CURATED (MEMBER_CURRENT -> TABLE_INDIA / TABLE_USA / ..., FCT_REDEMPTIONS)
-```
-Details and decisions: `docs/architecture.md`. Issues found in the sample data and how each is handled: `docs/data_issues_found.md`.
+## What was built
 
-## Run
+| Deliverable | Where |
+|---|---|
+| 1. DDL for raw, staging and country tables | `sql/ddl/`, `sql/transform/templates/country_table.sql.j2` |
+| 2. Staging with `AGE` and `STALE_MEMBER` | `sql/transform/load_stg_members.sql`, `sql/macros/derived.sql.j2` |
+| 3. Per-country split, latest record wins | `build_member_current.sql`, `country_merge.sql.j2` |
+| 4. JSON flatten and join to members | `load_stg_redemptions.sql`, `load_fct_redemptions.sql`, `sql/views/v_member_redemptions.sql` |
+| 5. Validations | `sql/dq/`, `src/ingest/file_checks.py` |
+| 6. Live demonstration | `docs/demo_script.md`, `scripts/scale_test.py` |
+
+**How it was developed:** scaffold and config, then architecture docs, DDL, load and staging, DQ rules, curated transforms,
+the Python runner, a data generator, and tests. It was then run on a real Snowflake account, which found and fixed load
+issues; scale-reviewed (country split made incremental, DQ made single-pass); extended with chunked parallel loading and
+per-step timing; and finally tested at 1,000,000 members.
+
+## How to execute
+
+**1. Set up and run the local tests** (no Snowflake needed; uses DuckDB for the pure-SQL logic)
 ```
 pip install -r requirements.txt
-pytest                                                    # 26 local tests (DuckDB, no Snowflake needed)
-python -m src.pipeline.runner --date 20240115 --dry-run   # print the rendered SQL, no connection
+pytest                                                     # 26 tests
+python -m src.pipeline.runner --date 20240115 --dry-run    # print the rendered SQL for every step
 ```
-Against Snowflake (creates the `SKYPOINTS` database, schemas, stage, tables and an XSMALL warehouse on first run):
+
+**2. Connect to Snowflake**
 ```
-export SNOWFLAKE_ACCOUNT=<org-account> SNOWFLAKE_USER=<login name>
-export SNOWFLAKE_PASSWORD=...            # or, if the account is SSO-only / MFA:
-export SNOWFLAKE_TOKEN=...               # programmatic access token
-python -m src.pipeline.runner --date 20240115 [--data-dir data/sample]
+export SNOWFLAKE_ACCOUNT=<org-account>  SNOWFLAKE_USER=<login name>
+export SNOWFLAKE_PASSWORD=...        # or, for SSO/MFA accounts:  export SNOWFLAKE_TOKEN=<programmatic access token>
 ```
-- Token (PAT) logins require a network policy on the user, e.g.
-  `CREATE NETWORK POLICY p ALLOWED_IP_LIST=('<your ip>'); ALTER USER "<user>" SET NETWORK_POLICY=p;`
-- The connector wants the **login name** (often the email); `ALTER USER` wants the **user name** (case-sensitive when quoted).
+Token logins need a network policy on the user:
+`CREATE NETWORK POLICY p ALLOWED_IP_LIST=('<your ip>'); ALTER USER "<user name>" SET NETWORK_POLICY=p;`
+(the connector takes the *login name*; `ALTER USER` takes the quoted, case-sensitive *user name*).
 
-## Tests
-- **Unit (local, DuckDB):** age/stale edge cases, latest-record-wins, file-name/header checks, SQL rendering, generator. `pytest`.
-- **Scale test (Snowflake):** `python scripts/scale_test.py --rows 1000000 --chunks 4 --date 20240118 --id-start 2000000`
-  generates 1M members (~2M transactions, 2% planted defects), runs the pipeline and asserts every count against the files.
-  Measured on an XSMALL trial warehouse: all 9 pipeline steps ~33 s, every check passed. Full results and limits: `docs/scale_test.md`.
-  This is millions, not billions; see the limits section there.
+**3. Run the pipeline.** The first run creates the `SKYPOINTS` database, schemas, stage, tables and an XSMALL warehouse.
+```
+python -m src.pipeline.runner --date 20240115                                  # day 1: the sample files in data/sample
+python -m src.pipeline.runner --date 20240116 --data-dir data/sample/day2      # day 2: a member moves India -> Canada
+```
+Each step prints its status and seconds, and ends with a raw-vs-staged reconciliation. Then inspect:
+```sql
+SELECT rule_code, business_key, raw_value FROM SKYPOINTS.STAGING.DQ_REJECTS;
+SELECT * FROM SKYPOINTS.CURATED.TABLE_CANADA;
+SELECT * FROM SKYPOINTS.CURATED.V_MEMBER_REDEMPTIONS;
+SELECT step, status, elapsed_s FROM SKYPOINTS.AUDIT.ETL_RUN_LOG ORDER BY started_ts DESC;
+```
 
-## Deliverables map
-| # | Deliverable | Where |
-|---|---|---|
-| 1 | DDL raw / staging / country tables | `sql/ddl/`, `sql/transform/templates/country_table.sql.j2` |
-| 2 | Staging with AGE, STALE_MEMBER | `sql/transform/load_stg_members.sql`, `sql/macros/derived.sql.j2` |
-| 3 | Per-country split, latest record wins | `build_member_current.sql`, `country_merge.sql.j2` |
-| 4 | JSON flatten + join | `load_stg_redemptions.sql`, `load_fct_redemptions.sql`, `v_member_redemptions.sql` |
-| 5 | Validations | `sql/dq/`, `src/ingest/file_checks.py` |
-| 6 | Demo | `docs/demo_script.md`, `src/datagen/generate.py` |
+**4. Generate data and run the scale test**
+```
+python -m src.datagen.generate --rows 100000 --chunks 2 --bad-pct 2 --date 20240120 --id-start 4000000 --out data/generated
+python scripts/scale_test.py --rows 1000000 --chunks 4 --date 20240118 --id-start 2000000
+```
+`scale_test.py` generates the feeds, runs the pipeline, and checks every count against what is in the files
+(exits non-zero on any mismatch). Use a fresh `--date` and `--id-start` for each run.
 
-## Assumptions to confirm
-DOB is DDMMYYYY; member_id is 6–18 digits; partner whitelist and tier/status lists in `config/`.
-Per-country physical tables are required by the brief; at scale one clustered table + views is usually better.
+## Results
+
+| Test | Outcome |
+|---|---|
+| Spec sample (5 members, 2 transactions) | Short IDs `22345` and `2256` and the `SkyPoints` partner rejected; DOB `03051985` becomes 1985-05-03; members land in the right country tables |
+| Country move and status change across days | Member leaves `TABLE_INDIA` and appears only in `TABLE_CANADA`; `RX10091` goes COMPLETED to CANCELLED; reruns are idempotent |
+| 1,000 rows with 5% planted defects | Every rule's reject count matched the file |
+| **1,000,000 members + 1,999,603 transactions** (XSMALL warehouse) | Pipeline steps ~33 s in total; all planted defects rejected with exact counts; 979,942 valid members; no member in two tables |
+
+This is millions, not billions. For billions: size the warehouse and chunk files (100-250 MB) from a larger test,
+ingest with Snowpipe from S3 instead of uploading from a laptop, and consider one clustered table with per-country views.
+Details and per-step timings: `docs/scale_test.md`.
+
+## Project layout
+```
+config/    pipeline steps, file specs, country mapping        sql/ddl, load, transform, dq, views, macros
+src/       pipeline (runner, country_splitter), ingest, db, datagen
+scripts/   scale_test.py                                       tests/    26 pytest tests
+docs/      architecture, data issues + assumptions, demo script, scale test results
+```
+Other docs: `docs/architecture.md`, `docs/demo_script.md`, `AI_USAGE.md`.
