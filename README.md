@@ -47,7 +47,7 @@ Python orchestrates the steps, renders per-country SQL from config, generates te
 
 ┌─ SUPPORTING ────────────────────────────────────────────────────────────────────────┐
 │ REF.COUNTRY        source code (USA, US, PHIL, AU ...) -> ISO-3 -> country table    │
-│ AUDIT.ETL_RUN_LOG  run_id, step, status, elapsed seconds, error text, per step   │
+│ AUDIT.ETL_RUN_LOG  run_id, step, status, elapsed seconds, error text, per step      │
 └─────────────────────────────────────────────────────────────────────────────────────┘
 
 ┌─ ORCHESTRATION   python -m src.pipeline.runner --date YYYYMMDD ─────────────────────┐
