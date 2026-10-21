@@ -1,0 +1,2 @@
+{# 'A','B','C' from a config list, for use inside SQL IN (...) #}
+{% macro q(xs) %}{% for x in xs %}'{{ x }}'{{ ',' if not loop.last }}{% endfor %}{% endmacro %}

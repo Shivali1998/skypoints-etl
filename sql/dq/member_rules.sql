@@ -1,5 +1,8 @@
-{% macro q(xs) %}{% for x in xs %}'{{ x }}'{{ ',' if not loop.last }}{% endfor %}{% endmacro %}
--- Every rule writes (file,row,key,rule,reason). Rows are never dropped silently.
+{% from 'sql/macros/common.sql.j2' import q %}
+-- Every rule writes (file, row, key, rule, reason). Rows are never dropped silently.
+-- How the rules work: every rule is an IFF(<violated?>, <reject details>, NULL) in one list.
+-- ARRAY_CONSTRUCT_COMPACT drops the NULLs, LATERAL FLATTEN turns each remaining entry into one
+-- DQ_REJECTS row, and the data is read once no matter how many rules there are.
 DELETE FROM STAGING.DQ_REJECTS
 WHERE feed = 'MEMBERS'
   AND file_name IN (SELECT DISTINCT file_name FROM RAW.RAW_MEMBERS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'));

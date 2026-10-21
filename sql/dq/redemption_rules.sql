@@ -1,4 +1,5 @@
-{% macro q(xs) %}{% for x in xs %}'{{ x }}'{{ ',' if not loop.last }}{% endfor %}{% endmacro %}
+{% from 'sql/macros/common.sql.j2' import q %}
+-- Same one-pass pattern as member_rules.sql: IFF per rule -> array of violations -> FLATTEN.
 DELETE FROM STAGING.DQ_REJECTS WHERE feed = 'REDEMPTIONS'
   AND file_name IN (SELECT DISTINCT file_name FROM STAGING.STG_REDEMPTIONS WHERE file_date = TO_DATE('{{ file_date }}', 'YYYYMMDD'));
 

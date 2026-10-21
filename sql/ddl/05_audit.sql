@@ -1,6 +1,5 @@
+-- One row per pipeline step per run: what ran, whether it worked, how long it took.
 CREATE TABLE IF NOT EXISTS AUDIT.ETL_RUN_LOG (
   run_id STRING, file_date DATE, step STRING, status STRING,
-  rows_in NUMBER, rows_out NUMBER, rows_rejected NUMBER,
-  started_ts TIMESTAMP_NTZ, ended_ts TIMESTAMP_NTZ, message STRING
+  elapsed_s NUMBER(10,2), message STRING, logged_ts TIMESTAMP_NTZ DEFAULT CURRENT_TIMESTAMP()
 );
-ALTER TABLE AUDIT.ETL_RUN_LOG ADD COLUMN IF NOT EXISTS elapsed_s NUMBER(10,2);

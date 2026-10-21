@@ -1,4 +1,4 @@
 CREATE TABLE IF NOT EXISTS REF.COUNTRY (
   source_code STRING, iso3 STRING, country_name STRING, table_name STRING
 );
--- Seeded from config/country_mapping.yaml by src/pipeline/seed_ref.py
+-- Seeded from config/country_mapping.yaml on every run (src/pipeline/country_splitter.py: seed_ref_sql)
